@@ -23,3 +23,5 @@
 利用 Java 的静态内部类来实现单例。
 ### 5.枚举
 通过 Java 枚举类型本身的特性，保证实例创建的线程安全性和实例的唯一性。
+### golang 实现单例模式
+https://github.com/yunmengren/DesignPattern/tree/main/Creational/singleton
