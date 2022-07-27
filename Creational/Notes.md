@@ -15,15 +15,70 @@
 - 考虑 getInstance() 性能是否高（是否加锁）
 ### 1.饿汉式
 在类加载的时候，instance 静态实例就已经创建并初始化好了，所以，实例的创建过程时线程安全的。不过这样的实现方式不支持延迟加载（即在真正用到的时候，再创建实例）
+```go
+package idgenerator
+
+import "sync/atomic"
+
+type idEagerGenerator struct {
+	id uint64
+}
+
+var iEG *idEagerGenerator
+
+func init() {
+	iEG = &idEagerGenerator{
+		id: 0,
+	}
+}
+
+func GetEagerInstance() *idEagerGenerator {
+	return iEG
+}
+
+func (self *idEagerGenerator) GetId() uint64 {
+	return atomic.AddUint64(&self.id, 1)
+}
+```
 ### 2.懒汉式
 在使用的时候， getInstance() 如果静态实例对象还没有被创建，则创建，每次需要判断，创建实例时要考虑线程安全问题
+```go
+package idgenerator
+
+import (
+	"sync"
+	"sync/atomic"
+)
+
+type idLazyGenerator struct {
+	id uint64
+}
+
+var (
+	IdLazyGenerator *idLazyGenerator
+	once            = &sync.Once{}
+)
+
+func GetLazyInstance() *idLazyGenerator {
+	if IdLazyGenerator == nil {
+		once.Do(func() {
+			IdLazyGenerator = &idLazyGenerator{
+				id: 0,
+			}
+		})
+	}
+	return IdLazyGenerator
+}
+
+func (self *idLazyGenerator) GetId() uint64 {
+	return atomic.AddUint64(&self.id, 1)
+}
+```
 ### 3.双重检测
 ### 4.静态内部类
 利用 Java 的静态内部类来实现单例。
 ### 5.枚举
 通过 Java 枚举类型本身的特性，保证实例创建的线程安全性和实例的唯一性。
-### golang 实现单例模式
-https://github.com/yunmengren/DesignPattern/tree/main/Creational/singleton
 
 ## 单例模式存在的问题
 大部分情况，在项目中使用单例，都是用它来表示一些全局唯一类，比如配置信息类、连接池类、ID生成器类。
@@ -52,3 +107,187 @@ https://github.com/yunmengren/DesignPattern/tree/main/Creational/singleton
 ### 如何实现一个多例模式
 多例指的是一个类可以创建多个对象，但是个数是有限制的，比如只能创建 3 个对象，可以理解为同一类型的只能创建一个对象，不同类型的可以创建多个对象。
 这种多例模式的理解方式有点类似于工厂模式。它跟工厂模式不同的是，多例模式创建的对象都是同一个类的对象，而工厂模式创建的是不同子类的对象。
+
+
+# 工厂模式(Factory Design Pattern)
+一般情况下，工厂模式分为三种更加细分的类型：简单工厂、工厂方法、抽象工厂。前两种比较简单，实际项目中也比较常用，而抽象工厂的原理稍微复杂点，在实际项目中也相对不常用。
+我们举一个例子，根据配置文件的后缀（json, xml, yaml, properties),选择不同德解析器(JsonRuleConfigParser, XmlRuleConfigParser...),将存储在文件中的配置解析成内存对象 RuleConfig
+## 简单工厂(Simple Factory)
+简单工厂模式，就是我们创建一个独立的类，让这个类来负责对象的创建
+```go
+package factory
+
+type IRuleConfigParser interface {
+	Parse(data []byte)
+}
+
+type jsonRuleConfigParser struct {
+}
+
+func (j jsonRuleConfigParser) Parse(data []byte) {
+	panic("implement me")
+}
+
+type xmlRuleConfigParser struct {
+}
+
+func (x xmlRuleConfigParser) Parse(data []byte) {
+	panic("implement me")
+}
+
+func NewRuleConfigParser(configFormat string) IRuleConfigParser {
+	switch configFormat {
+	case "json":
+		return jsonRuleConfigParser{}
+	case "xml":
+		return xmlRuleConfigParser{}
+	}
+	return nil
+}
+```
+## 工厂方法
+```go
+type IRuleConfigParserFactory interface {
+	CreateParser() IRuleConfigParser
+}
+
+type jsonRuleConfigParserFactory struct {
+}
+
+func (j jsonRuleConfigParserFactory) CreateParser() IRuleConfigParser {
+	return jsonRuleConfigParser{}
+}
+
+type xmlRuleConfigParserFactory struct {
+}
+
+func (x xmlRuleConfigParserFactory) CreateParser() IRuleConfigParser {
+	return xmlRuleConfigParser{}
+}
+
+// 此处用一个简单工厂封装工厂方法
+func NewIRuleConfigParserFactory(configFormat string) IRuleConfigParserFactory {
+	switch configFormat {
+	case "json":
+		return jsonRuleConfigParserFactory{}
+	case "xml":
+		return xmlRuleConfigParserFactory{}
+	}
+	return nil
+}
+```
+这样当我们新增一种 parser 的时候，只需要新增一个实现了 IRuleConfigParserFactory 接口的 Factory 类即可。所以**工厂方法模式比起简单工厂模式更加符合开闭原则**
+NewIRuleConfigParserFactory 相对当于**为工厂类再创建一个简单工厂，也就是工厂的工厂，用来创建工厂类对象**。
+### 什么时候该用工厂方法模式，而非简单工厂模式呢？
+当对象的创建逻辑比较复杂，不只是简单的 new 一下就可以，而是要组合其他类对象，做各种初始化操作的时候，我们推荐使用工厂方法模式，将复杂的逻辑拆分到多个工厂类中，让每个工厂类都不至于过于复杂。而使用简单工厂模式，将所有的创建逻辑都放到一个工厂类中，会导致这个工厂类变得很负责。
+除此之外，在某些场景下，如果对象不可服用，那工厂类每次都要返回不同的对象。如果我们使用简单工厂模式来实现，就只能选择第一种包含 if 或 switch 分支逻辑的实现方式。如果我们还想避免烦人的 if-else 分支逻辑，这个时候，我们就推荐只用工厂方法模式。
+## 抽象工厂(Abstract Factory)
+在规则配置解析的那个例子中，解析器类只会根据配置文件格式(Json, xml, yaml...)来分类。但是如果有两种分类方式，比如，我们既可以按照配置文件格式来分类，也可以按照解析的对象（Rule规则配置还是System系统配置）来分类，那么就会对应下面者8个parser类。
+```
+针对规则配置的解析器：基于接口IRuleConfigParser
+JsonRuleConfigParser
+XmlRuleConfigParser
+YamlRuleConfigParser
+PropertiesRuleConfigParser
+针对系统配置的解析器：基于接口ISystemConfigParser
+JsonSystemConfigParser
+XmlSystemConfigParser
+YamlSystemConfigParser
+PropertiesSystemConfigParser
+```
+针对这样的场景，如果还是继续使用工厂方法来实现的话，会有过多的类，让系统难以维护。
+我们可以使用抽象工厂，让一个工厂负责创建多个不同类型的对象(IRuleConfigParser, ISystemConfigParser..)
+```go
+package abstract_factory
+
+type IRuleConfigParser interface {
+	ParseRule(data []byte)
+}
+
+type ISystemConfigParser interface {
+	ParseSystem(data []byte)
+}
+
+type IConfigParserFactory interface {
+	CreateRuleParser() IRuleConfigParser
+	CreateSystemParser() ISystemConfigParser
+}
+
+type jsonConfigParserFactory struct{}
+
+type jsonRuleConfigParser struct {
+}
+
+func (j jsonRuleConfigParser) ParseRule(data []byte) {
+	panic("implement me")
+}
+
+type jsonSystemConfigParser struct {
+}
+
+func (j jsonSystemConfigParser) ParseSystem(data []byte) {
+	panic("implement me")
+}
+
+func (j jsonConfigParserFactory) CreateRuleParser() IRuleConfigParser {
+	return jsonRuleConfigParser{}
+}
+
+func (j jsonConfigParserFactory) CreateSystemParser() ISystemConfigParser {
+	return jsonSystemConfigParser{}
+}
+
+type xmlConfigParserFactory struct{}
+
+type xmlRuleConfigParser struct {
+}
+
+func (j xmlRuleConfigParser) ParseRule(data []byte) {
+	panic("implement me")
+}
+
+type xmlSystemConfigParser struct {
+}
+
+func (j xmlSystemConfigParser) ParseSystem(data []byte) {
+	panic("implement me")
+}
+
+func (j xmlConfigParserFactory) CreateRuleParser() IRuleConfigParser {
+	return xmlRuleConfigParser{}
+}
+
+func (j xmlConfigParserFactory) CreateSystemParser() ISystemConfigParser {
+	return xmlSystemConfigParser{}
+}
+```
+
+现在我们上升一个思维层面来看工厂模式，它的作用无外乎下面这四个。这也是判断亚欧吧要使用工厂模式做本质的**参考标准**
+- 封装变化：创建逻辑有可能变化，封装成工厂类之后，创建逻辑的变更对调用者透明。
+- 代码复用：创建代码抽离到独立的工厂类之后可以复用。
+- 隔离复杂性：封装复杂的创建逻辑，调用者无需了解如何创建对象。
+- 控制复杂度：将创建代码抽离出来，让原本的函数或类职责单一，代码更简洁。
+
+# DI
+依赖注入容器(Dependency Injection Container)，简称 DI 容器
+#### 工厂模式和 DI 容器有何区别
+实际上，DI 容器底层最基本的设计思路还是基于工厂模式的。DI 容器相当于一个大的工厂类，负责在程序启动的时候，根据配置（要创建哪些类对象，每个类对象的创建需要依赖哪些其他类对象）事先创建好对象。当应用程序需要使用某个类对象的时候，直接从容器中获取即可。正是因为它持有一堆对象，所以这个框架才被称为“容器”。
+#### DI容器核心功能
+- 配置解析
+- 对象创建
+- 对象生命周期管理
+##### 配置解析
+容器读取配置文件，根据配置文件提供的信息创建对象。
+##### 对象创建
+将所有类对象的创建都放到一个工厂类中完成就可以了，比如 BeansFactory。
+利用反射机制，在程序运行的过程中，动态地加载类、创建对象，不需要事先在代码中写死要创建哪些对象。所以不管是创建一个对象，还是十个对象，BeansFactory 工厂类代码都是一样的。
+##### 对象的生命周期管理
+在简单工厂模式中，有两种实现方式，一种是每次都返回新创建的对象，另一种是每次都返回同一个事先创建好的对象，也就是所谓的单例对象。在 Spring 框架中，可以通过设置 scope 属性，来区分两种不同类型的对象。scope=prototype 表示返回新创建的对象，scope=singleton 表示返回单例对象。
+除此之外，还可以配置对象是否支持懒加载。如果 lazy-init=true,对象在真正被使用到的时候（比如：BeanFactory.getBean("userService")）才被创建；如果 lazy-init=false,对象在应用启动的时候就事先创建好。
+不仅如此，还可以配置对象的 init-method 和 destory-method 方法。DI 容器在创建好对象之后，会主动调用 init-method 属性指定的方法来初始化对象。在对象最终销毁之前，DI 容器也会主动调用 destory-method 属性指定的方法来做一些清理工作，比如释放数据库连接池、关闭文件。
+#### 如何事先一个简单的 DI 容器？
+可以通过反射机制来实现一个简单的 DI 容器，核心逻辑只需要包括这两个部分：配置文件解析、根据配置文件通过“反射”语法来创建对象。
+##### 1.最小原型设计
+##### 2.提供执行入口
+##### 3.配置文件解析
+##### 4.核心工厂类设计
